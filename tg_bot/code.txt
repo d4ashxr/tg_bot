@@ -1,0 +1,185 @@
+import telebot
+from telebot import types
+import requests
+from daily_weather import get_daily_weather_data  # Исправлено для правильного импорта функции
+from sql import daily_clothes_choise  # Импорт функции clothes_choise
+from what_to_wear_now import clothes_choice
+
+bot = telebot.TeleBot('7403947420:AAH75OlgZgK8sF5FcZnb_uJq1e0U2dF3KN4')
+api_key = '804d8ac00e928e9c82b60a1e89929379'  # Replace with your actual OpenWeatherMap API key
+
+city_coords = {
+    'msk': (55.7558, 37.6173),  # Moscow
+    'spb': (59.9343, 30.3351),  # Saint Petersburg
+    'ekb': (56.8389, 60.6057),  # Yekaterinburg
+    'psk': (57.8194, 28.3319)  # Pskov
+}
+
+city_names_cords = {
+    'msk': 'moscow?lat=55.755863&lon=37.6177',  # Moscow
+    'spb': 'saint-petersburg',  # Saint Petersburg
+    'ekb': 'yekaterinburg',  # Yekaterinburg
+    'psk': 'pskov'  # Pskov
+}
+
+city_names = {
+    'msk': 'Москва',
+    'spb': 'Питер',
+    'ekb': 'Екатеринбург',
+    'psk': 'Псков'
+}
+
+
+def get_weather_data(lat, lon, lang='ru'):
+    url = f"https://api.openweathermap.org/data/2.5/weather"
+    params = {
+        'lat': lat,
+        'lon': lon,
+        'appid': api_key,
+        'lang': lang,
+        'units': 'metric'
+    }
+    response = requests.get(url, params=params)
+
+    if response.status_code == 200:
+        data = response.json()
+        weather = data['weather'][0]
+        main = data['main']
+
+        temperature = main['temp']
+        feels_like = main['feels_like']
+        condition = weather['description']
+        humidity = main['humidity']
+        pressure = main['pressure']
+
+        weather_info = [(
+            f"Температура: {temperature}°C\n"
+            f"Ощущается как: {feels_like}°C\n"
+            f"Состояние: {condition}\n"
+            f"Влажность: {humidity}%\n"
+            f"Давление: {pressure} мм рт.ст."
+        ), temperature, feels_like, condition, humidity, pressure]
+        return weather_info
+    else:
+        return f"Не удалось получить данные о погоде. Код ошибки: {response.status_code}"
+
+
+def main_menu():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    for city_key, city_name in city_names.items():
+        markup.add(types.KeyboardButton(city_name))
+    markup.add(types.KeyboardButton('Помощь'))
+    return markup
+
+
+@bot.message_handler(commands=['start'])
+def start(message):
+    bot.send_message(
+        message.chat.id,
+        f'Привет, {message.from_user.first_name}! Бот запущен, выбери город',
+        reply_markup=main_menu()
+    )
+
+
+@bot.message_handler(commands=['help'])
+def help(message):
+    bot.send_message(
+        message.chat.id,
+        'Этот бот поможет вам быстро узнать погоду. Введите /start для начала.',
+        reply_markup=main_menu()
+    )
+
+
+@bot.message_handler(content_types=['text'])
+def city_selection(message):
+    if message.text in city_names.values():
+        city_key = [key for key, value in city_names.items() if value == message.text][0]
+        lat, lon = city_coords[city_key]
+
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.add(types.KeyboardButton(f'Погода сейчас в {city_names[city_key]}'))
+        markup.add(types.KeyboardButton(f'Погода на день в {city_names[city_key]}'))
+        markup.add(types.KeyboardButton('Назад'))
+
+        bot.send_message(
+            message.chat.id,
+            'Отлично! Выберите действие из меню',
+            reply_markup=markup
+        )
+    elif message.text.startswith('Погода сейчас в'):
+        city_name = message.text.split(' в ')[1]
+        city_key = [key for key, value in city_names.items() if value == city_name][0]
+        lat, lon = city_coords[city_key]
+
+        weather_info = get_weather_data(lat, lon)
+        url_part = city_names_cords[city_key]
+        markup = types.InlineKeyboardMarkup()
+        recommend_button = types.InlineKeyboardButton('Pекомендации по одежде', callback_data=f'clothes_recommendation_now_{city_key}')
+        button = types.InlineKeyboardButton('Посмотреть на сайте', url=f'https://yandex.ru/pogoda/ru-RU/{url_part}')
+        markup.row(button)
+        markup.row(recommend_button)
+
+        bot.send_message(
+            message.chat.id,
+            f'Текущая погода в {city_name}:\n{weather_info[0]}',
+            reply_markup=markup
+        )
+
+    elif message.text.startswith('Погода на день в'):
+        city_name = message.text.split(' в ')[1]
+        city_key = [key for key, value in city_names.items() if value == city_name][0]
+        lat, lon = city_coords[city_key]
+
+        weather_info = get_daily_weather_data(lat, lon)
+        markup = types.InlineKeyboardMarkup()
+        # Создание кнопок
+        recommend_button = types.InlineKeyboardButton('Pекомендации по одежде',  callback_data=f'clothes_recommendation_{city_key}')
+        button = types.InlineKeyboardButton('Посмотреть на сайте', url=f'https://yandex.ru/pogoda/ru-RU/{city_names_cords[city_key]}')
+        # Добавление кнопок на одну строку (в один ряд)
+        markup.row(button)
+        markup.row(recommend_button)
+
+        bot.send_message(
+            message.chat.id,
+            f'Погода на день в {city_name}:\n{weather_info[0]}',
+            reply_markup=markup
+        )
+
+    elif message.text == 'Помощь':
+        help(message)
+    elif message.text == 'Назад':
+        bot.send_message(
+            message.chat.id,
+            'Возвращаемся в главное меню',
+            reply_markup=main_menu()
+        )
+    else:
+        bot.send_message(
+            message.chat.id,
+            'Пожалуйста, используйте меню',
+            reply_markup=main_menu()
+        )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('clothes_recommendation_'))
+def send_clothes_recommendation(call):
+    city_key = call.data.split('_')[-1]
+    if call.data.startswith('clothes_recommendation_now_'):
+        lat, lon = city_coords[city_key]
+        weather_info = get_weather_data(lat, lon)
+        recommendation = clothes_choice(weather_info)
+    else:
+        lat, lon = city_coords[city_key]
+        weather_info = get_daily_weather_data(lat, lon)
+        recommendation = daily_clothes_choise(weather_info)
+
+    recommendation_message = "Рекомендации по одежде:\n"
+    for key, items in recommendation.items():
+        recommendation_message += f"{key}\n"
+        for item in items:
+            recommendation_message += f"- {item}\n"
+
+    bot.send_message(call.message.chat.id, recommendation_message)
+
+
+bot.polling(none_stop=True)
